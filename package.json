@@ -1,0 +1,34 @@
+{
+  "name": "mservicebus",
+  "version": "0.0.1",
+  "description": "An AMQP-based service bus for microservice architectures ",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "mocha tests"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Aomitayo/mservicebus.git"
+  },
+  "keywords": [
+    "microservice",
+    "event",
+    "service",
+    "bus"
+  ],
+  "author": "Adedayo Omitayo <adedayo.omitayo@flowswift.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Aomitayo/mservicebus/issues"
+  },
+  "homepage": "https://github.com/Aomitayo/mservicebus",
+  "devDependencies": {
+    "chai": "^3.2.0",
+    "mocha": "^2.2.5",
+    "sinon": "^1.15.4",
+    "sinon-chai": "^2.8.0"
+  },
+  "dependencies": {
+    "amqplib": "^0.3.2"
+  }
+}
