@@ -1,77 +1,116 @@
 # mservicebus
 
-## Messaging
-In today's microservice architectures, messaging is the integration mechanism
-of choice. A service bus is a useful abstraction on message integration
-patterns. This package implements a service bus with 2 of the more common 
-messaging patterns:
+mservicebus is an opinionated implementation of a service bus.
 
-1. Request-response
-2. Publish-subscribe
+In today's microservices-style architectures, messaging is the integration
+mechanism of choice. A service bus is an abstraction on message exchange
+patterns, and forms the fabric that holds the microservices together.
 
-The request-response pattern is useful for actions (commands and queries which
-require acknowledgement or response data), whilst publish-subscribe is useful
-for notification and other forms of event publication.
+mservicebus lays emphasis on scalability, flexibility and simplicity, whilst
+the espousing key ideas that: 
 
-Messaging with mservicebus is based on AMQP. AMQP-style topic patterns are used
-for routing messages.
-
-## Event replay
-When event sourcing is applied to a microservice architecure, there is often 
-the need to replay events. For instance a failing service may require that 
-another service replay events that it missed during downtime.
-This presents the unique challenge that whilst similar to a request-response 
-pattern, order, idempotence and clustering need to be considered.
-This package provides a solution with nodejs streams, and AMQP styled topic
-patterns.
+- Microservices provide actions - command and queries
+- Microservice publish events
+- Microservices should be able to replay events.
 
 ## Getting started
 
 ```
 npm install mservice bus
 ```
+## Actions
 
-## Sample Code
+Actions - commands or queries, are remote procedure calls.
+mservicebus provides a fluent api for defining actions. It provides both 
+promise and callback apis for invoking actions.
+
 ```
-var servicebus = require('mservicebus');
-
-//respond to a command
-servicebus.respond('mysservice.action1', function(command, callback){
-  //put code to handle command here
-  //publish events
-  servicebus.publish('myservice.events.ActionOccurred', {prop1:'val1'});
-  //acknowledge command
-  callback();
+var Servicebus = require('servicebus');
+var servicebus = new Servicebus({
+	//options for amqp and timeouts
 });
 
-//resond to a query
-servicebus.respond('myservice.query.resource1', function(query, callback){
-  //put code to read from data base here
-  callback(null, data);
+//invoke an action
+servicebus.invoke('myotherservice.query1', {param1:'value1'}, function(err, results){
+	// put code to handle error or use results here
 });
 
-//respond to a request to replay certain events
-servicebus.stream('myservice.replay.ActionOccured', function(options, stream){
-  //write replayed events to stream here
-  stream.write({prop1:'valuex'});
-  stream.close();
+//define an action using the fluent api
+servicebus.action('myservice.command1')
+	.before(function(request, next){	//use simple middleware
+		//put code to execute middleware action
+	})
+	.after(function(request, response, next){
+		// put code to be executed after action is performed
+	})
+	.correct(function(err, args, next){	//use error middleware
+		//put code to handle error here
+	})
+	.perform(function(args, done){
+		//put code to perform the action 
+	});
+
+//define an action using a direct api
+servicebus.action('myservice.command2', function(args, done){
+	/put code to perform action here
+});
+servicebus.before('myservice.command2', function(args, done){
+	//put code to execute middleware action here
 });
 
-
-//run command from another service
-servicebus.request('myotherservice.actionx', function(err){
-  //put code to handle error or no error here
+servicebus.after('myservice.command2', function(args, done){
+	//put code to be executed after the action is performed here
 });
 
-//subscribe to events from another service
-servicebus.subscribe('myotherservice.events.*.asked.#', function(qualifier, event){
-  //put code to handle event here
+servicebus.correct('myservice.command2', function(err, args, done){
+	/put code to handle the error here;
 });
 
-//request stream of events from another service on startup
-servicebus.requestStream('myotherservice.replays.event', function(err, stream){
-  //work with stream here
+```
+
+## Event publications
+```
+servicebus.subscribe('myotherservice.stock.nyse.#', function(event){
+	//put code to handle event here
+});
+
+servicebus.publish('myservice.stock.acme', {
+	//event data goes here
 });
 ```
 
+##Event replay
+```
+servicebus.replay('myservice.event.stream', function(args, stream){
+	eventStore.getEvent(args, function(events){
+		events.forEach(function(event){
+			stream.write(event);
+		});
+		stream.close();
+});
 
+servicebus.requestReplay('myotherservice.event.name', function(err, stream){
+	//put code to handle error, or read event objects from stream
+})
+```
+
+## Contributing
+
+1. Fork it!
+2. Create your feature branch: `git checkout -b my-new-feature`
+3. Commit your changes: `git commit -am 'Add some feature'`
+4. Push to the branch: `git push origin my-new-feature`
+5. Submit a pull request :D
+
+## History
+
+TODO: Write history
+
+## Credits
+
+Adedayo Omitayo 
+	- https://github.com/Aomitayo
+
+## License
+
+[MIT](LICENSE)
