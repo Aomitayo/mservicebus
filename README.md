@@ -1,74 +1,87 @@
 # mservicebus
 
-mservicebus is an opinionated implementation of a service bus.
+In today's distributed-system architectures, messaging is the integration
+mechanism of choice. Whether microservices-styled, or actor-model based, Most 
+systems are implemented as message-passing systems. A service bus is an 
+abstraction on message exchange patterns. It is the fabric that holds the 
+components together.
 
-In today's microservices-style architectures, messaging is the integration
-mechanism of choice. A service bus is an abstraction on message exchange
-patterns, and forms the fabric that holds the microservices together.
+**mservicebus** is an opinionated implementation of a service bus. With emphasis
+on ease of use and scalability, it uses nodejs callbacks and streams as
+abstractions on message exchange patterns.
+Although it is based on AMQP. It seeks to remove the burden of managing the 
+details about connections, channels, queues, and message acknowledgement. It
+does however, provide the means to explicitly make some of the important choices
+when scaling out.
 
-mservicebus lays emphasis on scalability, flexibility and simplicity, whilst
-the espousing key ideas that: 
-
-- Microservices provide actions - command and queries
-- Microservice publish events
-- Microservices should be able to replay events.
+mservicebus support x message patterns:
+- request-response
+- publish-subscribe
+- XXXXXXXX
 
 ## Getting started
 
 ```
-npm install mservice bus
+npm install mservicebus
 ```
-## Actions
 
-Actions - commands or queries, are remote procedure calls.
-mservicebus provides a fluent api for defining actions. It provides both 
-promise and callback apis for invoking actions.
+## Instantiate and connect to an AMQP message broker such as rabbitmq
 
 ```
-var Servicebus = require('servicebus');
+var Servicebus = require('mservicebus');
+
 var servicebus = new Servicebus({
 	//options for amqp and timeouts
+	name: 'myservicebus',	//Will be used as the name of the topic exchange for pubsub 
+	timeout: 50000,
+	amqp:{
+		url:'amqp://localhost:5762',
+	}
 });
+```
 
-//invoke an action
-servicebus.invoke('myotherservice.query1', {param1:'value1'}, function(err, results){
+## Request-Response
+
+Request-Response is most useful for implementing Actions - commands or
+queries; in a sense, RPCs(Remote Procedure calls).
+mservicebus uses node-style callback api for defining and invoking actions.
+
+```
+//Send a request
+servicebus.request('myotherservice.query1', {param1:'value1'}, function(err, results){
 	// put code to handle error or use results here
 });
 
-//define an action using the fluent api
-servicebus.action('myservice.command1')
-	.before(function(request, next){	//use simple middleware
+//Recieve a request and send a response
+servicebus.fulfill('myservice.command1', function(request, callback){
+		//put code to perform action here
+		// this will be the main action 
+		// It is the function at the bottom of the stack of function registered
+		// for the named action
+	})
+	.use(function middleware1(request, next){	//use simple middleware
 		//put code to execute middleware action
+		next();
 	})
-	.after(function(request, response, next){
-		// put code to be executed after action is performed
+	.put(1, function middleware3(request, response, next){	//place middleware at index 1
+		//put code to execute middleware action
+		next();	
 	})
-	.correct(function(err, args, next){	//use error middleware
+	.putBefore('middleware3', function middleware2 (request, response, next){	//put middleware before 'middleware3'
+		//put code to execute middleware action
+		next();
+	})
+	.handleError(function(err, args, next){	//use error middleware
 		//put code to handle error here
-	})
-	.perform(function(args, done){
-		//put code to perform the action 
 	});
-
-//define an action using a direct api
-servicebus.action('myservice.command2', function(args, done){
-	/put code to perform action here
-});
-servicebus.before('myservice.command2', function(args, done){
-	//put code to execute middleware action here
-});
-
-servicebus.after('myservice.command2', function(args, done){
-	//put code to be executed after the action is performed here
-});
-
-servicebus.correct('myservice.command2', function(err, args, done){
-	/put code to handle the error here;
-});
 
 ```
 
-## Event publications
+## Publish-subscribe
+Publish-subscribe is useful for event publication.
+In many cases, subscribers make changes in response to events. As there may be
+multiple instances of a given subscriber running concurrently, A clear
+decision has to made about how to handle such a scenario. 
 ```
 servicebus.subscribe('myotherservice.stock.nyse.#', function(event){
 	//put code to handle event here
@@ -79,7 +92,37 @@ servicebus.publish('myservice.stock.acme', {
 });
 ```
 
+## Middleware & Fluent Api
+
+mservicebus provides a fluent api for using middleware functions. 
+
+```
+servicebus.fulfill('myservice.command1', function(request, callback){
+		//put code to perform action here
+		// this will be the main action 
+		// It is the function at the bottom of the stack of function registered
+		// for the named action
+	})
+	.use(function middleware1(request, next){	//use simple middleware
+		//put code to execute middleware action
+		next();
+	})
+	.put(1, function middleware3(request, response, next){	//place middleware at index 1
+		//put code to execute middleware action
+		next();	
+	})
+	.putBefore('middleware3', function middleware2 (request, response, next){	//put middleware before 'middleware3'
+		//put code to execute middleware action
+		next();
+	})
+	.handleError(function(err, args, next){	//use error middleware
+		//put code to handle error here
+	});
+
+
+```
 ##Event replay
+
 ```
 servicebus.replay('myservice.event.stream', function(args, stream){
 	eventStore.getEvent(args, function(events){

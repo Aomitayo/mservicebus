@@ -1,7 +1,7 @@
 {
   "name": "mservicebus",
   "version": "0.0.1",
-  "description": "An AMQP-based service bus for microservice architectures ",
+  "description": "An AMQP-based service bus for microservice architectures",
   "main": "src/index.js",
   "scripts": {
     "test": "mocha tests"
@@ -24,27 +24,31 @@
   "homepage": "https://github.com/Aomitayo/mservicebus",
   "devDependencies": {
     "beepbeep": "^1.2.0",
-    "chai": "^3.2.0",
-    "colors": "^1.1.2",
-    "gulp": "^3.9.0",
-    "gulp-jshint": "^1.11.2",
-    "gulp-load-plugins": "^1.0.0-rc.1",
-    "gulp-mocha": "^2.1.3",
-    "gulp-plumber": "^1.0.1",
-    "gulp-util": "^3.0.6",
-    "jshint-stylish": "^2.0.1",
-    "minimatch": "^2.0.10",
-    "mocha": "^2.2.5",
+    "chai": "~2.3.0",
+    "dotenv": "^1.2.0",
+    "gulp": "~3.8.11",
+    "gulp-jshint": "^1.10.0",
+    "gulp-load-plugins": "^0.10.0",
+    "gulp-mocha": "^2.1.1",
+    "gulp-shell": "^0.4.2",
+    "gulp-spawn-mocha": "^2.2.1",
+    "gulp-util": "^3.0.5",
+    "gulp-wait": "0.0.2",
+    "jshint-stylish": "^1.0.2",
+    "minimatch": "^2.0.8",
     "require-dir": "^0.3.0",
-    "run-sequence": "^1.1.2",
-    "sinon": "^1.15.4",
-    "sinon-chai": "^2.8.0"
+    "run-sequence": "^1.1.0",
+    "sinon": "^1.14.1",
+    "sinon-chai": "~2.7.0",
+    "mkenv": "~1.2.0",
+    "mocha": "^2.2.5"
   },
   "dependencies": {
     "amqplib": "^0.3.2",
     "async": "^1.4.0",
+    "colors": "^1.1.0",
     "debug": "^2.2.0",
-    "lodash": "^3.10.0",
+    "lodash": "^3.10.1",
     "node-uuid": "^1.4.3",
     "topic-patterns": "0.0.3"
   }

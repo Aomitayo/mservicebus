@@ -1,20 +1,17 @@
-'use strict';
-/* jshint latedef:false */
-var _ = require('lodash');
-
-module.exports = FunctionStack;
-
 /**
  * FunctionStack
- * 
- * Defines a stack of asynchronous functions to be invoked in sequence.
+ * @module
  *
- * Each function should have the signature function(..args, next).
- * `args` are the arguments to the function, and `next` is a callback function
+ * Utility for wrapping an asynchronous function  with a stack of asynchronous
+ * "middleware" functions and an optional stack of asynchronous error handler
+ * functions.
+ *
+ * Each middleware function should have the signature function(..args, next).
+ * `args` are arguments to the function, and `next` is a callback function
  * with the signature function(err, results).
  * 
- * The functions in the stack control the execution of the stack of functions by
- * calling `next` with either an error or a result.
+ * The functions in the stack control the flow of control by calling `next` with
+ * either an error or a result.
  *
  * calling next() without arguments passes execution to the next function in 
  * the stack.
@@ -25,64 +22,54 @@ module.exports = FunctionStack;
  * The action stack to stop executing and call the the callback of the of the 
  * run method with the result.
  *
- * @return {undefined}
  */
-function FunctionStack(){
+'use strict';
+/* jshint latedef:false */
+var _ = require('lodash');
+
+module.exports = FunctionStack;
+
+/**
+ * FunctionStack
+ * @constructor 
+ *
+ * @return {FunctionStack}
+ */
+function FunctionStack(wrapped){
 	var self = this;
 	
 	self._fnStack = [];
 	self._errorHandlerStack = [];
+	self.wrapped = wrapped;
 }
 
 /**
- * add
- * Adds a function to the stack
+ * wrap
  *
- * @param {String| Number} position - The position at which to insert the 
- * function.
- * @param fn
- * @return {FunctionStack}
- */
-FunctionStack.prototype.add = function(position, fn){
-	var self = this;
-	self._use(self._fnStack, position, fn);
-	return self;
-};
-
-/**
- * addBefore 
- * an alias for FunctionStack#add
+ * Sets the wrapped function
  *
- * @return {FunctionStack}
- */
-FunctionStack.prototype.addBefore = FunctionStack.prototype.add;
-
-/**
- * addErrorHandler
- * Registers an error handler.
- *
- * @param position
- * @param fn
+ * @param wrapped
  * @return {undefined}
  */
-FunctionStack.prototype.addErrorHandler = function(position, fn){
-	var self = this;
-	self._use(self._errorHandlerStack, position, fn);
-	return self;
+FunctionStack.prototype.wrap = function(wrapped){
+	this.wrapped = wrapped;
+	return this;
 };
 
+
 /**
- * _use
+ * _put
+ * Places the given function into the given stack  at the given position
  *
- * Adds a function to the stack
- *
- * @param {String| Number} position - The position at which to insert the 
+ * @param {Array} stack
+ * @param {(String| Number)} position - The position at which to insert the 
  * function.
- * @param fn
+ * @param {function} fn
  * @return {FunctionStack}
  */
-FunctionStack.prototype._use = function(stack, position, fn){
+FunctionStack.prototype._put = function(stack, position, fn){
 	var self = this;
+
 	if(typeof position === 'function' && !fn){
 		fn = position;
 		position = undefined;
@@ -109,29 +96,103 @@ FunctionStack.prototype._use = function(stack, position, fn){
 	}
 
 	throw new Error('position should be  the name of an action function or an integer');
+	return self;
+};
+/**
+ * put
+ *
+ * Places a function into the stack at a desired position.
+ *
+ * @param {(String| Number)} position - The position at which to insert the 
+ * function.
+ * @param fn
+ * @return {FunctionStack}
+ */
+FunctionStack.prototype.put = function(position, fn){
+	var self = this;
+
+	return self._put(self._fnStack, position, fn);
+};
+
+/**
+ * putBefore
+ *
+ * an alias for put 
+ *
+ * @return {undefined}
+ */
+FunctionStack.prototype.putBefore = FunctionStack.prototype.put;
+/**
+ * use
+ *
+ * Adds a function to the bottom of the stack
+ *
+ * @param fn
+ * @return {FunctionStack}
+ */
+FunctionStack.prototype.use = function(fn){
+	var self = this;
+	self.put(self._fnStack.length, fn);
+	return self;
+};
+
+/**
+ * push
+ *
+ * Adds a function to the top of the stack
+ *
+ * @param {function} fn
+ * @return {FunctionStack}
+ */
+FunctionStack.prototype.push = function(fn){
+	var self = this;
+	self.put(0, fn);
+	return self;
+};
+
+/**
+ * addErrorHandler
+ * Registers an error handler.
+ *
+ * @param position
+ * @param fn
+ * @return {undefined}
+ */
+FunctionStack.prototype.addErrorHandler = function(position, fn){
+	var self = this;
+	self._put(self._errorHandlerStack, position, fn);
+	return self;
 };
 
 /**
  * A function called after an action has been run. 
- * @callback actionCallback
+ * @callback stackRunCallback
  * @param err - Error object, or null
  * @param {Any} results - The result from running the action if any
  */
 
 /**
- * run
+ * call
  * 
- * Runs the stack of functions used by this action.
+ * Runs the stack of functions or errorHandlers before calling the wrapped 
+ * function if it has been set. The callback is passed to the wrapped function,
+ * which can call it with an error and or results.
  *
- * calls the callback with the results or the  first occurance of an error -if any.
+ * If an error any of the middleware functions calls next with an error, and the
+ * error is not handled by the stack of errorHandlers, then the callback is 
+ * called with the error as its first parameter
  *
  * @param {...Any} arg - The arguments to be passed to each function in the stack
- * @param {actionCallback} callback - function(err, result) called after executing the stack.
+ * @param {stackRunCallback} callback - function(err, result) called after executing the stack.
  * @return {FunctionStack}
  */
-FunctionStack.prototype.run = function(cmd, callback){
+FunctionStack.prototype.call = function(){
 	var self = this;
-	self._runStack(self._fnStack, cmd, callback);
+	var args = Array.prototype.slice.apply(arguments);
+	var fnStack = self.wrapped? self._fnStack.concat(self.wrapped) : self._fnStack;
+	args.unshift(fnStack);
+	args.push(self._errorHandlerStack);	
+	self._runStack.apply(self, args);
 	return self;
 };
 
@@ -144,22 +205,37 @@ FunctionStack.prototype.run = function(cmd, callback){
  *
  * @param [Array] stack - The stack of function to run.
  * @param {...Any} args - The arguments to be passed to each function in the stack
- * @param {actionCallback} callback - The callback that handles the result
+ * @param {stackRunCallback} callback - The callback that handles the result
+ * @param {function[]} [errorHandlerStack] -  A array of error handler functions
  * @return {FunctionStack}
  */
 FunctionStack.prototype._runStack = function(){
 	var self = this;
 
 	var args = Array.prototype.slice.call(arguments, 0);
-	var stack = _.head(arguments);
-	var callback = _.last(arguments);
-	args = args.slice(1, -1);
+	var stack = _.head(args);
+	var errorHandlerStack = _.last(args);
+	var callback, runArgs;
+
+	if(Array.isArray(errorHandlerStack)){
+		callback = _.head(args.slice(-2));
+		runArgs = args.slice(1, -2);
+	}
+	else{
+		callback = errorHandlerStack;
+		errorHandlerStack = undefined;
+		runArgs = args.slice(1, -1);
+	}
+	if(typeof callback !== 'function'){
+		throw new Error('function stack callback should be a function');
+	}
 
 	function invokeNext(stk, err, result){
 		if(err){
-			if(self._runErrorStack){
-				var errArgs = [self._errorHandlerStack || [], err].concat(args).concat(callback);
-				return self._runErrorStack.apply(self, errArgs);
+			if(errorHandlerStack && errorHandlerStack.length > 0){
+
+				var errArgs = [errorHandlerStack, err].concat(runArgs).concat(callback);
+				return self._runStack.apply(self, errArgs);
 			}
 			else{
 				return callback(err);
@@ -173,49 +249,9 @@ FunctionStack.prototype._runStack = function(){
 		if(stk.length === 0){
 			return callback(err, result);
 		}
-		_.head(stk).apply(self, args.concat(_.partial(invokeNext, _.rest(stk))));
+		_.head(stk).apply(self, runArgs.concat(_.partial(invokeNext, _.rest(stk))));
 		//_.head(stk)(cmd, _.partial(invokeNext, _.rest(stk)));
 	}
 	invokeNext(stack);
 	return self;
-};
-
-
-/**
- * _runErrorStack
- * 
- * Runs a the stack of error handlers.
- *
- * calls the callback with the results or the error -if any.
- *
- * @param [Array] stack - The stack of function to run.
- * @param {Any} error - The error that occurred
- * @param {...Any} args - The arguments that were being passed to functions in the stack
- * @param {actionCallback} callback - The callback that handles the result
- * @return {Undefined}
- */
-FunctionStack.prototype._runErrorStack = function(){
-	var self = this;
-	var args = Array.prototype.slice.call(arguments, 0);
-	var stack = args[0];
-	var error = args[1];
-	var callback = _.last(args);
-	args = args.slice(1, -1);
-
-	function invokeNext(stk, err, result){
-		if(typeof err !== 'undefined' && err === null){
-			return callback(err);
-		}
-
-		if(typeof result !== 'undefined'){
-			return callback(null, result);
-		}
-
-		if(stk.length === 0){
-			return callback(error);
-		}
-		_.head(stk).apply(self, args.concat(_.partial(invokeNext, _.rest(stk))));
-		//_.head(stk)(cmd, _.partial(invokeNext, _.rest(stk)));
-	}
-	invokeNext(stack);
 };
