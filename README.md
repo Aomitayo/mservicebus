@@ -121,7 +121,7 @@ servicebus.fulfill('myservice.command1', function(request, callback){
 
 
 ```
-##Event replay
+## Event replay
 
 ```
 servicebus.replay('myservice.event.stream', function(args, stream){
@@ -137,7 +137,7 @@ servicebus.requestReplay('myotherservice.event.name', function(err, stream){
 })
 ```
 
-## Key desgin choices.
+## Key design choices.
 
 In the interest of scalability, mservicebus demands that each instance of the
 servicebus be given a `servicename`. This allows for load balancing/fair dispatch
