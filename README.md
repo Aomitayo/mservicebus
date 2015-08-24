@@ -52,7 +52,7 @@ servicebus.request('myotherservice.query1', {param1:'value1'}, function(err, res
 	// put code to handle error or use results here
 });
 
-//Recieve a request and send a response
+//Fulfill a request
 servicebus.fulfill('myservice.command1', function(request, callback){
 		//put code to perform action here
 		// this will be the main action 
@@ -136,6 +136,13 @@ servicebus.requestReplay('myotherservice.event.name', function(err, stream){
 	//put code to handle error, or read event objects from stream
 })
 ```
+
+## Key desgin choices.
+
+In the interest of scalability, mservicebus demands that each instance of the
+servicebus be given a `servicename`. This allows for load balancing/fair dispatch
+between multiple instance of the same system comonent.   
+
 
 ## Contributing
 

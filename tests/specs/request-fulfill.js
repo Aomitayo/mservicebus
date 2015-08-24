@@ -5,16 +5,18 @@ chai.use(require('sinon-chai'));
 var Servicebus = require('../../');
 var amqpUrl = process.env.AMQP_URL || 'amqp://192.168.59.103:5672';
 
-describe('mservicebus action dispatch', function(){
+describe('mservicebus request-fulfill', function(){
 	context('Separate request and fulfillment buses', function(){
 		beforeEach(function(){
 			var context = this;
 			context.fulfillingBus = new Servicebus({
+				serviceName: 'acmebus',
 				amqp:{
 					url:amqpUrl
 				}
 			});
 			context.requestingBus = new Servicebus({
+				serviceName: 'acmebus',
 				amqp:{
 					url:amqpUrl
 				}
