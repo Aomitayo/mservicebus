@@ -298,7 +298,9 @@ Servicebus.prototype.fulfill = function(qualifier, fn){
 	}
 
 	if(!fulfiller.channel && self._connection){
-		self._attachFulfillers([fulfiller]);
+		var fulfillers = {};
+		fulfillers[qualifier] = fulfiller;
+		self._attachFulfillers(fulfillers);
 	}
 
 	return fulfiller.functionStack;
