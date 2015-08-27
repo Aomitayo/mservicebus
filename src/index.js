@@ -447,7 +447,7 @@ Servicebus.prototype._attachSubscribers = function(subscribers){
 					debug('%s Unable to assert %s exchange', self._instanceId, exchange);
 					return self._disconnect();
 				}
-				var queue = subscriber.suscriptionId;
+				var queue = subscriber.subscriptionId;
 
 				channel.assertQueue(
 					queue,
