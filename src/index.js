@@ -373,6 +373,7 @@ Servicebus.prototype._attachFulfillers = function(fulfillers){
 			channel.on('close', function(){
 				delete fulfiller.channel;
 			});
+			self.emit('attachedFulfiller', qualifier);
 			debug('Attached fulfiller', qualifier);
 		});
 	});
