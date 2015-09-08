@@ -21,6 +21,7 @@ function Servicebus(options){
 		//It is Used to derive names for message queues 
 		//serviceName: 'service name',
 		reconnect: 10,
+		requestTimeout: 1*60*1000,
 		amqp:{
 			url:'amqp://localhost:5672',
 		}
@@ -175,7 +176,12 @@ Servicebus.prototype.request = function(){
 		correlationId: uuid(),
 		requestArgs: requestArgs,
 		replyQueue: self._replyQueue,
-		callback:callback
+		callback:callback,
+		timeout: setTimeout(function(){
+			var timeoutErr = new Error('The request has timed out perhaps target service has gone offline');
+			timeoutErr.name = 'RequestTimeout';
+			request.callback(timeoutErr);
+		}, self.options.requestTimeout)
 	};
 	
 	self._activeRequests[request.correlationId] = request;
@@ -228,6 +234,7 @@ Servicebus.prototype._attachRequestCallbacks =  function(){
 					debug('%s Matching request: %s', self._instanceId, msg.properties.correlationId);
 					var request = self._activeRequests[msg.properties.correlationId];
 					if(request){
+						clearTimeout(request.timeout);
 						var callbackArgs = JSON.parse(msg.content.toString());
 						request.callback.apply(self, callbackArgs);
 						self.emit('RequestFullfilled');

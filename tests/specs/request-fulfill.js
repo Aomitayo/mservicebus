@@ -23,6 +23,7 @@ describe('mservicebus request-fulfill', function(){
 			var ctx = this;
 			ctx.requestingBus = new Servicebus({
 				serviceName: 'acmebusConsumer',
+				requestTimeout: 3000,
 				amqp:{
 					url:amqpUrl
 				}
@@ -56,6 +57,13 @@ describe('mservicebus request-fulfill', function(){
 				});
 			}, 100);
 		});
-	
+		it('Times out when there is no fulfilment', function(done){
+			var ctx = this;
+			ctx.requestingBus.request('myservice.timeoutaction', {prop1:'value1'}, function(err){
+				expect(err).to.exist;
+				expect(err).to.have.property('name', 'RequestTimeout');
+				done();
+			});
+		});	
 	});
 });
