@@ -43,7 +43,7 @@ gulp.task('lint', function () {
 
 gulp.task('test', function () {
 	var testProcess = $.spawnMocha({
-		t: 6000,
+		t: 8000,
 		R: 'spec'
 	})
 	.once('error', function () {

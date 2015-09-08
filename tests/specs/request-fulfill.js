@@ -7,41 +7,54 @@ var amqpUrl = process.env.AMQP_URL || 'amqp://192.168.59.103:5672';
 
 describe('mservicebus request-fulfill', function(){
 	context('Separate request and fulfillment buses', function(){
-		beforeEach(function(){
-			var context = this;
-			context.fulfillingBus = new Servicebus({
+		beforeEach(function(done){
+			var ctx = this;
+			ctx.fulfillingBus = new Servicebus({
 				serviceName: 'acmebus',
 				amqp:{
 					url:amqpUrl
 				}
 			});
-			context.requestingBus = new Servicebus({
-				serviceName: 'acmebus',
+			ctx.fulfillingBus.once('readyForRequests', function(){
+				done();
+			});
+		});
+		beforeEach(function(done){
+			var ctx = this;
+			ctx.requestingBus = new Servicebus({
+				serviceName: 'acmebusConsumer',
 				amqp:{
 					url:amqpUrl
 				}
+			});
+			ctx.requestingBus.once('readyForRequests', function(){
+				done();
 			});
 		});
 
-		afterEach(function(){
-			var context = this;
-			context.fulfillingBus.close();
-			context.requestingBus.close();
+		afterEach(function(done){
+			var ctx = this;
+			ctx.fulfillingBus.close();
+			ctx.requestingBus.close();
+			setTimeout(done, 0);
 		});
 		
 		it('Invokes only the correct actions', function(done){
+			var ctx = this;
 			var action1 = sinon.stub().yields(null, {resultValue:'resultValue1'});
 			var action2 = sinon.stub().yields(null, {resultValue:'resultValue2'});
 
-			this.fulfillingBus.fulfill('myservice.action1', action1);
-			this.fulfillingBus.fulfill('myservice.action2', action2);
+			ctx.fulfillingBus.fulfill('myservice.action1', action1);
+			ctx.fulfillingBus.fulfill('myservice.action2', action2);
 			
-			this.requestingBus.request('myservice.action1', {prop1:'value1'}, function(err, result){
-				expect(action1).to.have.been.called;
-				expect(action2).to.not.have.been.called;
-				expect(result).to.have.property('resultValue', 'resultValue1');
-				done();
-			});
+			setTimeout(function(){
+				ctx.requestingBus.request('myservice.action1', {prop1:'value1'}, function(err, result){
+					expect(action1).to.have.been.called;
+					expect(action2).to.not.have.been.called;
+					expect(result).to.have.property('resultValue', 'resultValue1');
+					done();
+				});
+			}, 100);
 		});
 	
 	});

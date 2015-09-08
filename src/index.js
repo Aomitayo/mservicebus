@@ -36,23 +36,23 @@ function Servicebus(options){
 	self._fulfillers = {};
 
 	// a map of subscriptions keyed by topic
-	self._subscriptions = [];
+	self._subscriptions = {};
 	self.pubsubExchange = 'mservicebus_pubsub';
 
 	//a map of requests keyed by correlationId	
 	self._activeRequests = {};
 
-	self.on('connection', self._attachRequestCallbacks.bind(self));
-	self.on('connection', self._attachFulfillers.bind(self, self._fulfillers));
-	self.on('connection', self._attachSubscribers.bind(self, self._subscriptions));
-	self.on('connection', self._startPublish.bind(self));
+	self.on('connected', self._attachRequestCallbacks.bind(self));
+	self.on('connected', self._attachFulfillers.bind(self, self._fulfillers));
+	self.on('connected', self._attachSubscribers.bind(self, self._subscriptions));
+	self.on('connected', self._startPublish.bind(self));
 
-	self.on('disconnection', self._detachRequestCallbacks.bind(self));
-	self.on('disconnection', self._detachFulfillers.bind(self, self._fulfillers));
-	self.on('disconnection', self._stopPublish.bind(self));
+	self.on('disconnected', self._detachRequestCallbacks.bind(self));
+	self.on('disconnected', self._detachFulfillers.bind(self, self._fulfillers));
+	self.on('disconnected', self._stopPublish.bind(self));
 
 	self._reconnect = self.options.reconnect;
-	self.on('disconnection', function(){
+	self.on('disconnected', function(){
 		if(self._reconnect){
 			-- self._reconnect;
 			self._connect();
@@ -65,7 +65,9 @@ function Servicebus(options){
 	});
 	
 	//connect to the message broker
-	self._connect();
+	process.nextTick(function(){
+		self._connect();
+	});
 }
 
 util.inherits(Servicebus, EventEmitter);
@@ -86,13 +88,13 @@ Servicebus.prototype._connect = function(){
 	amqplib.connect(self.options.amqp.url, function(err, connection){
 		connection.on('close', function(){
 			debug('%s Connection closed', self._instanceId);
-			self.emit('disconnection');	
+			self.emit('disconnected');	
 		});
 		self._connection = connection;
 
 		debug('%s Connected to message broker', self._instanceId);
 
-		self.emit('connection');
+		self.emit('connected');
 	});
 };
 
@@ -188,6 +190,7 @@ Servicebus.prototype.request = function(){
 	);
 
 	debug('Requesting: %s replyTo:%s correlationId:%s', qualifier, request.replyQueue, request.correlationId);
+	self.emit('request', qualifier, requestArgs);
 
 	return self;
 };
@@ -227,6 +230,7 @@ Servicebus.prototype._attachRequestCallbacks =  function(){
 					if(request){
 						var callbackArgs = JSON.parse(msg.content.toString());
 						request.callback.apply(self, callbackArgs);
+						self.emit('RequestFullfilled');
 					}
 					else{
 						// silently discard the reply message that does not 
@@ -492,6 +496,8 @@ Servicebus.prototype._attachSubscribers = function(subscriptions){
 								subscription.channel = channel;
 								channel.on('close', function(){delete subscription.channel;});
 								subscription.consumerTag = ok.consumerTag;
+								self.emit('subscribed', subscription.topicPatterns);
+								debug('%s Attached subscription:', self._instanceId, subscription.topicPatterns);
 							}
 						);
 					}
@@ -505,9 +511,10 @@ Servicebus.prototype._attachSubscribers = function(subscriptions){
 
 Servicebus.prototype._detachSubscribers = function(){
 	var self = this;
-	_.forEach(self.subscribers, function(subscriber){
-		if(subscriber.channel){
-			subscriber.channel.close();
+	_.forEach(self.subscriptions, function(subscription){
+		if(subscription.channel){
+			subscription.channel.close();
+			self.emit('unsubscribed', subscription.topicPatterns);
 		}
 	});
 };
