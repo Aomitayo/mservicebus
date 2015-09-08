@@ -46,5 +46,20 @@ describe('mservicebus publish-subscribe', function(){
 			});
 			setTimeout(context.publishingBus.publish.bind(context.publishingBus, 'myservice.trade.nyse.google', {price:'1234567'}), 100);
 		});
+		
+		it('Allows for multiple local subscribers to the same topic set', function(done){
+			var context = this;
+			var subscriber1 = sinon.stub();
+			var subscriber2 = sinon.stub();
+
+			context.subscribingBus.subscribe('myservice.multisubs.#', subscriber1);
+			context.subscribingBus.subscribe('myservice.multisubs.#', subscriber2);
+			setTimeout(context.publishingBus.publish.bind(context.publishingBus, 'myservice.multisubs.tradings', {price:'1234567'}), 100);
+			setTimeout(function(){
+				expect(subscriber1).to.have.been.called;
+				expect(subscriber2).to.have.been.called;
+				done();
+			}, 150);
+		});
 	});
 });

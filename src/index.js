@@ -36,7 +36,7 @@ function Servicebus(options){
 	self._fulfillers = {};
 
 	// a map of subscriptions keyed by topic
-	self._subscribers = [];
+	self._subscriptions = [];
 	self.pubsubExchange = 'mservicebus_pubsub';
 
 	//a map of requests keyed by correlationId	
@@ -44,7 +44,7 @@ function Servicebus(options){
 
 	self.on('connection', self._attachRequestCallbacks.bind(self));
 	self.on('connection', self._attachFulfillers.bind(self, self._fulfillers));
-	self.on('connection', self._attachSubscribers.bind(self, self._subscribers));
+	self.on('connection', self._attachSubscribers.bind(self, self._subscriptions));
 	self.on('connection', self._startPublish.bind(self));
 
 	self.on('disconnection', self._detachRequestCallbacks.bind(self));
@@ -406,21 +406,25 @@ Servicebus.prototype.subscribe = function(topicPatterns, fn){
 	subscriptionId = crypto.createHash('md5').update(subscriptionId).digest('hex');
 	subscriptionId = self.options.serviceName + '.' + subscriptionId;
 
-	var functionStack = new FunctionStack(fn);
+	var subscriber = new FunctionStack(fn);
 
-	var subscriber = {
+	self._subscriptions[subscriptionId] = self._subscriptions[subscriptionId] || {
 		topicPatterns: topicPatterns,
 		subscriptionId: subscriptionId,
-		functionStack: functionStack
+		subscribers: []
 	};
-	self._subscribers.push(subscriber);
+
+	var subscription = self._subscriptions[subscriptionId];
+	subscription.subscribers.push(subscriber);
 
 	//attach this subscriber if connection to message broker is already open
-	if(self._connection){
-		self._attachSubscribers([subscriber]);
+	if(self._connection && subscription.subscribers.length === 1){
+		var subscriptions = {};
+		subscriptions[subscriptionId] = subscription;
+		self._attachSubscribers(subscriptions);
 	}
 
-	return subscriber.functionStack;	
+	return subscriber;	
 };
 
 /**
@@ -428,16 +432,16 @@ Servicebus.prototype.subscribe = function(topicPatterns, fn){
  *
  * @return {Servicebus}
  */
-Servicebus.prototype._attachSubscribers = function(subscribers){
+Servicebus.prototype._attachSubscribers = function(subscriptions){
 	var self = this;
 
 	if(!self._connection){
-		return self.once('connection', self._attachSubscribers.bind(self, subscribers));
+		return self.once('connection', self._attachSubscribers.bind(self, subscriptions));
 	}
 
-	_.forEach(subscribers, function(subscriber){
-		if(subscriber.channel){return;}
-		debug('%s Attaching subscriber:', self._instanceId, subscriber.topicPatterns);
+	_.forEach(subscriptions, function(subscription){
+		if(subscription.channel){return;}
+		debug('%s Attaching subscription:', self._instanceId, subscription.topicPatterns);
 		self._connection.createChannel(function(chErr, channel){
 			if(chErr){
 				return self._disconnect();
@@ -449,17 +453,17 @@ Servicebus.prototype._attachSubscribers = function(subscribers){
 					debug('%s Unable to assert %s exchange', self._instanceId, exchange);
 					return self._disconnect();
 				}
-				var queue = subscriber.subscriptionId;
+				var queue = subscription.subscriptionId;
 
 				channel.assertQueue(
 					queue,
 					{durable:false, exclusive:false, autoDelete:true},
 					function(qErr){
 						if(qErr){
-							debug('%s Unable to asssert queue %s', self._instanceId. subscriber.subscriptionId);
+							debug('%s Unable to asssert queue %s', self._instanceId. subscription.subscriptionId);
 							return self._disconnect();
 						}
-						_.forEach(subscriber.topicPatterns, function(pattern){
+						_.forEach(subscription.topicPatterns, function(pattern){
 							channel.bindQueue(queue, exchange, pattern, {}, function(bindErr){
 								if(bindErr){
 									debug('%s Unable to bind queue %s to exchange %s for pattern %s', self._instanceId, queue, exchange, pattern);
@@ -472,8 +476,10 @@ Servicebus.prototype._attachSubscribers = function(subscribers){
 							function(msg){
 								var evt = JSON.parse(msg.content.toString());
 								var topic = msg.fields.routingKey;
-								debug('%s Pushing %s event to subscriber ', self._instanceId, topic);
-								subscriber.functionStack.call(topic, evt, _.noop);
+								debug('%s Pushing %s event to subscription ', self._instanceId, topic);
+								_.forEach(subscription.subscribers, function(fnStack){
+									fnStack.call(topic, evt, _.noop);
+								});
 								channel.ack(msg);
 							},
 							{noAck: false},
@@ -483,9 +489,9 @@ Servicebus.prototype._attachSubscribers = function(subscribers){
 									return self._disconnect();
 								}
 
-								subscriber.channel = channel;
-								channel.on('close', function(){delete subscriber.channel;});
-								subscriber.consumerTag = ok.consumerTag;
+								subscription.channel = channel;
+								channel.on('close', function(){delete subscription.channel;});
+								subscription.consumerTag = ok.consumerTag;
 							}
 						);
 					}
