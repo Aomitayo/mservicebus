@@ -15,7 +15,7 @@ describe('mservicebus request-fulfill', function(){
 					url:amqpUrl
 				}
 			});
-			ctx.fulfillingBus.once('readyForRequests', function(){
+			ctx.fulfillingBus.once('init:requests', function(){
 				done();
 			});
 		});
@@ -28,7 +28,7 @@ describe('mservicebus request-fulfill', function(){
 					url:amqpUrl
 				}
 			});
-			ctx.requestingBus.once('readyForRequests', function(){
+			ctx.requestingBus.once('init:requests', function(){
 				done();
 			});
 		});

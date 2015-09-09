@@ -34,23 +34,45 @@ function Servicebus(options){
 	self._instanceId = self.options.serviceName + uuid();
 
 	//a map of fulfillers keyed by qualifier
-	self._fulfillers = {};
+	self._fulfillments = {};
 
 	// a map of subscriptions keyed by topic
 	self._subscriptions = {};
-	self.pubsubExchange = 'mservicebus_pubsub';
+	self._pubsubExchange = 'mservicebus_pubsub';
 
-	//a map of requests keyed by correlationId	
+	//a map of requests keyed by correlationId/requestId	
 	self._activeRequests = {};
 
-	self.on('connected', self._attachRequestCallbacks.bind(self));
-	self.on('connected', self._attachFulfillers.bind(self, self._fulfillers));
-	self.on('connected', self._attachSubscribers.bind(self, self._subscriptions));
-	self.on('connected', self._startPublish.bind(self));
+	self.on('connected', self._assertChannels.bind(self));
+	self.on('channelOpened', function(key){
+		if(key === 'requests'){
+			self._initRequestCallback();
+		}
+		if(key === 'fulfillments'){
+			self._initFulfillments(self._fulfillments);
+		}
+		if(key === 'publications'){
+			self._initPublications();
+		}
+		if(key === 'subscriptions'){
+			self._initSubscriptions();
+		}
+	});
 
-	self.on('disconnected', self._detachRequestCallbacks.bind(self));
-	self.on('disconnected', self._detachFulfillers.bind(self, self._fulfillers));
-	self.on('disconnected', self._stopPublish.bind(self));
+	self.on('terminate', function(){
+		self._terminateRequestCallback();
+		self._terminateSubscriptions();
+		self._terminateFulfillments();
+		self._terminatePublications();
+	});
+
+	//self.on('connected', self._attachFulfillers.bind(self, self._fulfillments));
+	//self.on('connected', self._attachSubscribers.bind(self, self._subscriptions));
+	//self.on('connected', self._startPublish.bind(self));
+
+	//self.on('disconnected', self._detachRequestCallbacks.bind(self));
+	//self.on('disconnected', self._detachFulfillers.bind(self, self._fulfillments));
+	//self.on('disconnected', self._stopPublish.bind(self));
 
 	self._reconnect = self.options.reconnect;
 	self.on('disconnected', function(){
@@ -84,8 +106,7 @@ util.inherits(Servicebus, EventEmitter);
  */
 Servicebus.prototype._connect = function(){
 	var self = this;
-	debug('%s Connecting to message broker', self._instanceId);
-
+	
 	amqplib.connect(self.options.amqp.url, function(err, connection){
 		connection.on('close', function(){
 			debug('%s Connection closed', self._instanceId);
@@ -93,9 +114,9 @@ Servicebus.prototype._connect = function(){
 		});
 		self._connection = connection;
 
-		debug('%s Connected to message broker', self._instanceId);
-
 		self.emit('connected');
+
+		debug('%s Connected to message broker', self._instanceId);
 	});
 };
 
@@ -111,12 +132,15 @@ Servicebus.prototype._connect = function(){
  */
 Servicebus.prototype._disconnect = function(){
 	var self = this;
-	debug('%s Disconnecting from message broker', self._instanceId);
-	if(self._connection){
-		self._connection.close(function(){
-			debug('%s disconnected', self._instanceId);
-		});
-	}
+	self.emit('terminate');
+	setTimeout(function(){
+		debug('%s Disconnecting from message broker', self._instanceId);
+		if(self._connection){
+			self._connection.close(function(){
+				debug('%s disconnected', self._instanceId);
+			});
+		}
+	}, 0);
 };
 
 /**
@@ -134,15 +158,101 @@ Servicebus.prototype._disconnect = function(){
 Servicebus.prototype.close = function(){
 	var self = this;
 	debug('%s Closed', self._instanceId);
-	self._detachRequestCallbacks();
-	self._detachFulfillers();
-	self._stopPublish();
-	self._detachSubscribers();
 
 	self.options.reconnect	= 0;
 	self._disconnect();	
 };
 
+Servicebus.prototype._assertChannels = function(){
+	var self = this;
+	if(!self._connection){
+		return self.once(self._assertChannels.bind(self));
+	}
+
+	self._channels = self._channels || {};
+	var channelKeys = [
+		'requests',
+		'fulfillments',
+		'publications',
+		'subscriptions'
+	];
+	_.forEach(channelKeys, function(key){
+		if(!self._channels[key]){
+			self._connection.createChannel(function(err, channel){
+				if(err){
+					debug('%s Could not create requests channel', self._instanceId);
+					self.emit('error', 'assertChannel:' + key, err);
+				}
+				else{
+					channel.on('close', function(){
+						delete self._channels[key];
+					});
+					self._channels[key] = channel;
+					self.emit('channelOpened', key, channel);
+					self.emit('channelOpened:'+key, channel);
+				}
+			});
+		}
+	});
+};
+
+Servicebus.prototype._initRequestCallback = function(){
+	var self = this;
+	if(!(self._channels && self._channels.requests)){
+		self.once('channelOpened:requests', self._initRequestCallback.bind(self));
+		return;
+	}
+	
+	self._activeRequests = self._activeRequests || {};
+	self._requestsConfig = self._requestsConfig || {};
+
+	var channel = self._channels.requests;
+	channel.assertQueue('', {exclusive:true, durable:false}, function(err, ok){
+		if(err){
+			self.emit('error', err);
+		}
+		
+		self._requestCallbackQueue = ok.queue;
+
+		channel.consume(
+			self._requestCallbackQueue,
+			function(msg){
+				if(!msg){return;}
+				var callbackArgs = JSON.parse(msg.content.toString());
+				var requestId = msg.properties.correlationId;
+				var request = self._activeRequests[requestId];
+				if(request){
+					clearTimeout(request.timeout);
+					request.callback.apply(self, callbackArgs);
+					self.emit.apply(self, ['RequestFullfilled', request.qualifier].concat(callbackArgs));
+					delete self._activeRequests[requestId];
+				}
+				else{
+					self.emit.apply(['error', 'invalidRequestFulfillment', request.qualifier].concat(callbackArgs));
+				}
+			},
+			{
+				noAck:true,
+				//exclusive:true
+			},
+			function(err, consumer){
+				self._requestCallbackConsumerTag = consumer.consumerTag;
+				debug('%s Ready for requests', self._instanceId, self._requestCallbackQueue, self._requestCallbackConsumerTag);
+				self.emit('init:requests');
+			}
+		);
+	});
+};
+
+Servicebus.prototype._terminateRequestCallback = function(){
+	var self = this;
+	if(self._requestCallbackConsumerTag && self._channels.requests){
+		self._channels.requests.cancel(self._requestCallbackConsumerTag);
+	}
+	if(self._requestCallbackQueue){
+		self._channels.requests.deleteQueue(self._requestCallbackQueue);
+	}
+};
 /**
  * Request
  *
@@ -168,14 +278,13 @@ Servicebus.prototype.request = function(){
 		return self.once('connection', callAgain);
 	}
 
-	if(!self._requestChannel){
-		return self.once('readyForRequests', callAgain);
+	if(!(self._channels && self._channels.requests && self._requestCallbackQueue)){
+		return self.once('init:requests', callAgain);
 	}
 	var request = {
 		qualifier: qualifier,
-		correlationId: uuid(),
+		requestId: uuid(),
 		requestArgs: requestArgs,
-		replyQueue: self._replyQueue,
 		callback:callback,
 		timeout: setTimeout(function(){
 			var timeoutErr = new Error('The request has timed out perhaps target service has gone offline');
@@ -184,98 +293,83 @@ Servicebus.prototype.request = function(){
 		}, self.options.requestTimeout)
 	};
 	
-	self._activeRequests[request.correlationId] = request;
+	self._activeRequests[request.requestId] = request;
 
-	self._requestChannel.sendToQueue(
+	self._channels.requests.sendToQueue(
 		qualifier,
 		new Buffer(JSON.stringify(requestArgs)),
 		{
-			replyTo: request.replyQueue,
-			correlationId: request.correlationId
+			replyTo: self._requestCallbackQueue,
+			correlationId: request.requestId
 		}
 	);
 
-	debug('Requesting: %s replyTo:%s correlationId:%s', qualifier, request.replyQueue, request.correlationId);
 	self.emit('request', qualifier, requestArgs);
+	self.emit('request:'+ qualifier, requestArgs);
 
 	return self;
 };
 
-/**
- * _attachRequestCallbacks
- *
- * Setup the channel, queue and consumer that calls request callbacks
- *
- * @return {undefined}
- */
-Servicebus.prototype._attachRequestCallbacks =  function(){
+Servicebus.prototype._initFulfillments = function(fulfillments){
 	var self = this;
-	debug('%s  Attaching request callbacks', self._instanceId);
-	self._connection.createChannel(function(err, channel){
-		if(err){
-			debug('%s could not create request channel', self._instanceId, err);
-			return self._disconnect();
-		}
-		self._requestChannel = channel;
-		self._requestChannel.on('close', function(){
-			delete self._requestChannel;
-			delete self._replyQueue;
-		});
+	if(!(self._channels && self._channels.fulfillments)){
+		self.once('channelOpened:fulfillments', self.initFulfillments.bind(self, fulfillments));
+	}
 
-		self._requestChannel.assertQueue(self._replyQueue || '', {exclusive:true, durable:false}, function(err, ok){
-			if(err){
-				return self._disconnect();
-			}
-			self._replyQueue = ok.queue;
-			self._requestChannel.consume(
-				self._replyQueue,
-				function(msg){
-					if(!msg){return;}
-					debug('%s Matching request: %s', self._instanceId, msg.properties.correlationId);
-					var request = self._activeRequests[msg.properties.correlationId];
-					if(request){
-						clearTimeout(request.timeout);
-						var callbackArgs = JSON.parse(msg.content.toString());
-						request.callback.apply(self, callbackArgs);
-						self.emit('RequestFullfilled');
-					}
-					else{
-						// silently discard the reply message that does not 
-						// correspond to any request
-					}
-				},
-				{
-					noAck:true,
-					//exclusive:true
-				},
-				function(err, consumer){
-					self._replyConsumerTag = consumer.consumerTag;
-					debug('%s Ready for requests', self._instanceId, self._replyQueue, self._replyConsumerTag);
-					self.emit('readyForRequests');
+	fulfillments = fulfillments? fulfillments : self._fulfillments;
+
+	var channel = self._channels.fulfillments;
+
+	_.forEach(fulfillments, function(fulfillment){
+		if(fulfillment.isActive){
+			return;
+		}
+		
+		var queue = fulfillment.qualifier;
+		channel.assertQueue(queue, {durable:false, autoDelete:true});
+		channel.prefetch(1);
+		channel.consume(
+			queue,
+			function(msg){
+				var args = JSON.parse(msg.content.toString());
+				var fnStackArgs = args.concat(function(){
+					var callbackArgs = Array.prototype.slice.apply(arguments);
+					callbackArgs = JSON.stringify(callbackArgs);
+
+					channel.sendToQueue(
+						msg.properties.replyTo,
+						new Buffer(callbackArgs),
+						{
+							correlationId: msg.properties.correlationId
+						}
+					);
+					channel.ack(msg);
+				});
+				fulfillment.functionStack.call.apply(fulfillment.functionStack, fnStackArgs);
+				self.emit.apply(self, ['fulfill', queue].concat(args));
+			},
+			{noAck:false},
+			function(err){
+				if(err){
+					debug('could not consume requests', err);
+					self._disconnect();
 				}
-			);
-		});
+				self.emit('init:fulfillment', fulfillment.qualifier);
+				self.emit('init:fullfillment:'+fulfillment.qualifier);
+			}
+		);
+
 	});
 };
 
-/**
- * _detachRequestCallbacks
- * 
- * Stops the consumption of reply messages, and closes the channel
- *
- * @return {undefined}
- */
-Servicebus.prototype._detachRequestCallbacks = function(){
+Servicebus.prototype._terminateFulfillments = function(){
 	var self = this;
-	if(self._replyConsumerTag && self._requestChannel){
-		self._requestChannel.cancel(self._replyConsumerTag);
-	}
-	if(self._replyQueue){
-		self._requestChannel.deleteQueue(self._replyQueue);
-	}
-
-	if(self._requestChannel){
-		self._requestChannel.close();
+	if(self._channels.fulfillments){
+		_.forEach(self._fulfillments, function(fulfillment){
+			self._channels.fulfillments.cancel(fulfillment.consumerTag);
+			self._channels.fulfillments.deleteQueue(fulfillment.qualifier);
+			fulfillment.isActive = false;
+		});
 	}
 };
 
@@ -292,107 +386,179 @@ Servicebus.prototype._detachRequestCallbacks = function(){
  */
 Servicebus.prototype.fulfill = function(qualifier, fn){
 	var self = this;
-	var fulfiller = self._fulfillers[qualifier] || {
-		qualifier:qualifier,
+
+	var fulfillment = self._fulfillments[qualifier] || {
+		qualifier: qualifier,
 		functionStack: new FunctionStack()
 	};
 
-	if(!self._fulfillers[qualifier]){
-		self._fulfillers[qualifier] = fulfiller;
-	}
-	if(fn && fulfiller.functionStack._wrapped){
+	if(fulfillment.wrapped){
 		throw new Error('A fulfillment has already been registered for '+ qualifier);
 	}
 
 	if(fn){
-		fulfiller.functionStack.wrap(fn);
+		fulfillment.functionStack.wrap(fn);
 	}
 
-	if(!fulfiller.channel && self._connection){
-		var fulfillers = {};
-		fulfillers[qualifier] = fulfiller;
-		self._attachFulfillers(fulfillers);
+	if(!fulfillment.isActive){
+		var fulfillments = {};
+		fulfillments[qualifier] = fulfillment;
+		self._initFulfillments(fulfillments);
 	}
 
-	return fulfiller.functionStack;
+	return fulfillment.functionStack;
 };
 
-
-/**
- * _attachFulfillers
- *
- * attached the fulfillers to the message broker
- *
- * @return {undefined}
- */
-Servicebus.prototype._attachFulfillers = function(fulfillers){
+Servicebus.prototype._initPublications = function(){
 	var self = this;
-	if(!self._connection){
-		return self.once('connection', self._attachFulfillers.bind(self, fulfillers));
+	if(!(self._channels && self._channels.publications)){
+		self.once('channelOpened:publications', self._initPublications.bind(self));
+		return;
 	}
-	_.forEach(fulfillers, function(fulfiller, qualifier){
-		if(fulfiller.channel){return;}
-		debug('Attaching fulfiller ', qualifier);
-		self._connection.createChannel(function(err, channel){
-			if(err){
-				return self._disconnect();
+
+	var channel = self._channels.publications;
+
+	if(!self._pubsubExchange){
+		channel.assertExchange(self._pubsubExchange, 'topic', {durable:true}, function(exErr){
+			if(exErr){
+				self.emit('error', 'pubsubexchange', exErr);
+				return;
 			}
 
-			channel.assertQueue(qualifier, {durable:false, autoDelete:true});
-			channel.prefetch(1);
-			channel.consume(
-				qualifier,
-				function(msg){
-					debug('received request', qualifier);
-					var args = JSON.parse(msg.content.toString());
-					args = args.concat(function(){
-						debug('fulfilling %s replyTo:%s correlationId: %s', qualifier, msg.properties.replyTo, msg.properties.correlationId);
-						var callbackArgs = Array.prototype.slice.apply(arguments);
-						callbackArgs = JSON.stringify(callbackArgs);
-
-						channel.sendToQueue(
-							msg.properties.replyTo,
-							new Buffer(callbackArgs),
-							{
-								correlationId: msg.properties.correlationId
-							}
-						);
-						channel.ack(msg);
-					});
-					fulfiller.functionStack.call.apply(fulfiller.functionStack, args);
-				},
-				{noAck:false},
-				function(err){
-					if(err){
-						debug('could not consume requests', err);
-						self._disconnect();
-					}
-				}
-			);
-			fulfiller.channel = channel;
-			channel.on('close', function(){
-				delete fulfiller.channel;
-			});
-			self.emit('attachedFulfiller', qualifier);
-			debug('Attached fulfiller', qualifier);
+			self._pubsubExchange = 'mservicebus_pubsub';
+			self.emit('init:publications');
 		});
-	});
+		return;
+	}
+};
+
+Servicebus.prototype._terminatePublications = function(){
+	var self = this;
+	if(self._publicationCallbackConsumerTag && self._channels.publications){
+		self._channels.publications.cancel(self._publicationCallbackConsumerTag);
+	}
 };
 
 /**
- * _detachFulfillers
+ * publish
  *
- * Stops request fulfilment by Temporarily closing down  fulfiller's channels.
- *
- * @return {undefined}
+ * @param {String} topic - The topic under which to publish the event
+ * @param {Object} event - the event to be published to subscribers
+ * @return {Servicebus}
  */
-Servicebus.prototype._detachFulfillers = function(){
+Servicebus.prototype.publish = function(topic, event){ 
 	var self = this;
-	_.forEach(self.fulfillers, function(fulfiller){
-		if(fulfiller.channel){
-			fulfiller.channel.close();
+	var args = Array.prototype.slice.apply(arguments);
+
+	function callAgain(){
+		self.publish.apply(self, args);
+	}
+
+	if(!self._connection){
+		self.once('connection', callAgain);
+		return self;
+	}
+
+	if(!self._channels.publications){
+		self.once('readyForPublish', callAgain);
+		return self;
+	}
+	
+	self._channels.publications.publish(
+		self._pubsubExchange,
+		topic,
+		new Buffer(JSON.stringify(event))
+	);
+
+	self.emit('publication', topic, event);
+	self.emit('publication:'+topic, event);
+	return self;
+};
+
+Servicebus.prototype._initSubscriptions = function(subscriptions){
+	var self = this;
+	if(!(self._channels && self._channels.subscriptions)){
+		self.once('channelOpened:subscriptions', self.initSubscriptionCallback.bind(self, subscriptions));
+		return;
+	}
+	if(!self._pubsubExchange){
+		channel.assertExchange(self._pubsubExchange, 'topic', {durable:true}, function(exErr){
+			if(exErr){
+				self.emit('error', 'pubsubexchange', exErr);
+				return;
+			}
+
+			self._pubsubExchange = 'mservicebus_pubsub';
+			self._initSubscriptions(subscriptions);
+		});
+		return;
+	}
+
+	subscriptions = subscriptions? subscriptions : self._subscriptions;
+
+	var channel = self._channels.subscriptions;
+
+	_.forEach(subscriptions, function(subscription){
+		if(subscription.isActive){
+			return;
 		}
+		
+		var queue = subscription.subscriptionId;
+
+		channel.assertQueue(
+			queue,
+			{durable:false, exclusive:false, autoDelete:true},
+			function(qErr){
+				if(qErr){
+					self.emit('error', 'subscriptionQueue', qErr, subscription);
+					return;
+				}
+				_.forEach(subscription.topicPatterns, function(pattern){
+					channel.bindQueue(queue, self._pubsubExchange, pattern, {}, function(bindErr){
+						if(bindErr){
+							self.emit('error', 'subscriptionQueue:bind', bindErr, pattern);
+							return;
+						}
+					});
+				});
+				channel.consume(
+					queue,
+					function(msg){
+						var evt = JSON.parse(msg.content.toString());
+						var topic = msg.fields.routingKey;
+						debug('%s Pushing %s event to subscription ', self._instanceId, topic);
+						_.forEach(subscription.subscribers, function(fnStack){
+							fnStack.call(topic, evt, _.noop);
+						});
+						channel.ack(msg);
+					},
+					{noAck: false},
+					function(consumeErr, ok){
+						if(consumeErr){
+							self.emit('error', 'subscriptionConsume', consumeErr, subscription);
+							return;
+						}
+						subscription.isActive = true;
+						subscription.consumerTag = ok.consumerTag;
+						self.emit('init:subscriptions', subscription);
+					}
+				);
+			}
+		);
 	});
+};
+
+Servicebus.prototype._terminateSubscriptions = function(){
+	var self = this;
+	if(self._channels.subscriptions){
+		_.forEach(self._subscriptions, function(subscription){
+			self._channels.subscriptions.deleteQueue(subscription.subscriptionId);
+			if(subscription.consumerTag){
+				self._channels.subscriptions.cancel(subscription.consumerTag);
+			}
+			subscription.isActive = false;
+		});
+	}
 };
 
 
@@ -430,166 +596,11 @@ Servicebus.prototype.subscribe = function(topicPatterns, fn){
 	subscription.subscribers.push(subscriber);
 
 	//attach this subscriber if connection to message broker is already open
-	if(self._connection && subscription.subscribers.length === 1){
+	if(!subscription.isActive){
 		var subscriptions = {};
 		subscriptions[subscriptionId] = subscription;
-		self._attachSubscribers(subscriptions);
+		self._initSubscriptions(subscriptions);
 	}
 
 	return subscriber;	
-};
-
-/**
- * _attachSubscribers
- *
- * @return {Servicebus}
- */
-Servicebus.prototype._attachSubscribers = function(subscriptions){
-	var self = this;
-
-	if(!self._connection){
-		return self.once('connection', self._attachSubscribers.bind(self, subscriptions));
-	}
-
-	_.forEach(subscriptions, function(subscription){
-		if(subscription.channel){return;}
-		debug('%s Attaching subscription:', self._instanceId, subscription.topicPatterns);
-		self._connection.createChannel(function(chErr, channel){
-			if(chErr){
-				return self._disconnect();
-			}
-			var exchange = self.pubsubExchange;
-
-			channel.assertExchange(exchange, 'topic', {durable:true}, function(exErr){
-				if(exErr){
-					debug('%s Unable to assert %s exchange', self._instanceId, exchange);
-					return self._disconnect();
-				}
-				var queue = subscription.subscriptionId;
-
-				channel.assertQueue(
-					queue,
-					{durable:false, exclusive:false, autoDelete:true},
-					function(qErr){
-						if(qErr){
-							debug('%s Unable to asssert queue %s', self._instanceId. subscription.subscriptionId);
-							return self._disconnect();
-						}
-						_.forEach(subscription.topicPatterns, function(pattern){
-							channel.bindQueue(queue, exchange, pattern, {}, function(bindErr){
-								if(bindErr){
-									debug('%s Unable to bind queue %s to exchange %s for pattern %s', self._instanceId, queue, exchange, pattern);
-									self._disconnect();
-								}
-							});
-						});
-						channel.consume(
-							queue,
-							function(msg){
-								var evt = JSON.parse(msg.content.toString());
-								var topic = msg.fields.routingKey;
-								debug('%s Pushing %s event to subscription ', self._instanceId, topic);
-								_.forEach(subscription.subscribers, function(fnStack){
-									fnStack.call(topic, evt, _.noop);
-								});
-								channel.ack(msg);
-							},
-							{noAck: false},
-							function(consumeErr, ok){
-								if(consumeErr){
-									debug('%s Unable to initiate consumption from %s via %s', self._instanceId, queue, exchange);
-									return self._disconnect();
-								}
-
-								subscription.channel = channel;
-								channel.on('close', function(){delete subscription.channel;});
-								subscription.consumerTag = ok.consumerTag;
-								self.emit('subscribed', subscription.topicPatterns);
-								debug('%s Attached subscription:', self._instanceId, subscription.topicPatterns);
-							}
-						);
-					}
-				);
-			});
-		});
-	});
-
-	return self;
-};
-
-Servicebus.prototype._detachSubscribers = function(){
-	var self = this;
-	_.forEach(self.subscriptions, function(subscription){
-		if(subscription.channel){
-			subscription.channel.close();
-			self.emit('unsubscribed', subscription.topicPatterns);
-		}
-	});
-};
-/**
- * publish
- *
- * @param {String} topic - The topic under which to publish the event
- * @param {Object} event - the event to be published to subscribers
- * @return {Servicebus}
- */
-Servicebus.prototype.publish = function(topic, event){ 
-	var self = this;
-	var args = Array.prototype.slice.apply(arguments);
-
-	function callAgain(){
-		self.publish.apply(self, args);
-	}
-
-	if(!self._connection){
-		self.once('connection', callAgain);
-		return self;
-	}
-
-	if(!self._publishChannel){
-		self.once('readyForPublish', callAgain);
-		return self;
-	}
-	
-	self._publishChannel.publish(
-		self.pubsubExchange,
-		topic,
-		new Buffer(JSON.stringify(event))
-	);
-
-	debug('%s Publishing %s', self._instanceId, topic);
-	return self;
-};
-
-Servicebus.prototype._startPublish = function(){
-	var self = this;
-	debug('%s prepareing for pub sub', self._instanceId);
-	self._connection.createChannel(function(err, channel){
-		if(err){
-			debug('%s could not create request channel', self._instanceId, err);
-			return self._disconnect();
-		}
-
-		channel.assertExchange(self.pubsubExchange, 'topic', {durable:true}, function(exErr){
-			if(exErr){
-				debug('%s Unable to assert exchange %s', self._instanceId, self.pubsubExchange);
-			}
-			self._publishChannel = channel;
-			self._publishChannel.on('close', function(){
-				delete self._publishChannel;
-				delete self._replyQueue;
-			});
-			debug('%s Ready for publish', self._instanceId);
-			self.emit('readyForPublish');
-
-		});
-	});
-};
-
-
-Servicebus.prototype._stopPublish = function(){
-	var self = this;
-	if(self._publishChannel){
-		self._publishChannel.close();
-	}	
 };

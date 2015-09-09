@@ -15,7 +15,7 @@ describe('mservicebus publish-subscribe', function(){
 					url:amqpUrl
 				}
 			});
-			ctx.subscribingBus.once('readyForPublish', function(){
+			ctx.subscribingBus.once('channelOpened:subscriptions', function(){
 				done();
 			});
 		});
@@ -27,7 +27,7 @@ describe('mservicebus publish-subscribe', function(){
 					url:amqpUrl
 				}
 			});
-			ctx.publishingBus.once('readyForPublish', function(){
+			ctx.publishingBus.once('channelOpened:publications', function(){
 				done();
 			});
 		});
@@ -50,10 +50,10 @@ describe('mservicebus publish-subscribe', function(){
 				expect(subscriber1).to.not.have.been.called;
 				done();
 			});
-			setTimeout(ctx.publishingBus.publish.bind(ctx.publishingBus, 'myservice.trade.nyse.google', {price:'1234567'}), 1000);
+			setTimeout(ctx.publishingBus.publish.bind(ctx.publishingBus, 'myservice.trade.nyse.google', {price:'1234567'}), 500);
 		});
 		
-		it('Allows for multiple local subscribers to the same topic set', function(done){
+		it('Allows multiple local subscriptions to the same topic set', function(done){
 			var ctx = this;
 			var subscriber1 = sinon.stub();
 			var subscriber2 = sinon.stub();
