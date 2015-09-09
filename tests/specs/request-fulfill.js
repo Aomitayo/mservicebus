@@ -4,6 +4,7 @@ var sinon = require('sinon');
 chai.use(require('sinon-chai'));
 var Servicebus = require('../../');
 var amqpUrl = process.env.AMQP_URL || 'amqp://192.168.59.103:5672';
+var _ = require('lodash');
 
 describe('mservicebus request-fulfill', function(){
 	context('Separate request and fulfillment buses', function(){
@@ -15,7 +16,7 @@ describe('mservicebus request-fulfill', function(){
 					url:amqpUrl
 				}
 			});
-			ctx.fulfillingBus.once('init:requests', function(){
+			ctx.fulfillingBus.once('init:requestFulfillments', function(){
 				done();
 			});
 		});
@@ -28,7 +29,7 @@ describe('mservicebus request-fulfill', function(){
 					url:amqpUrl
 				}
 			});
-			ctx.requestingBus.once('init:requests', function(){
+			ctx.requestingBus.once('init:requestFulfillments', function(){
 				done();
 			});
 		});
@@ -47,15 +48,14 @@ describe('mservicebus request-fulfill', function(){
 
 			ctx.fulfillingBus.fulfill('myservice.action1', action1);
 			ctx.fulfillingBus.fulfill('myservice.action2', action2);
-			
-			setTimeout(function(){
+			ctx.fulfillingBus.on('init:fulfillment', _.after(2,function(){
 				ctx.requestingBus.request('myservice.action1', {prop1:'value1'}, function(err, result){
 					expect(action1).to.have.been.called;
 					expect(action2).to.not.have.been.called;
 					expect(result).to.have.property('resultValue', 'resultValue1');
 					done();
 				});
-			}, 100);
+			}));	
 		});
 		it('Times out when there is no fulfilment', function(done){
 			var ctx = this;

@@ -15,7 +15,7 @@ describe('mservicebus publish-subscribe', function(){
 					url:amqpUrl
 				}
 			});
-			ctx.subscribingBus.once('channelOpened:subscriptions', function(){
+			ctx.subscribingBus.once('init:pubsub', function(){
 				done();
 			});
 		});
@@ -27,7 +27,7 @@ describe('mservicebus publish-subscribe', function(){
 					url:amqpUrl
 				}
 			});
-			ctx.publishingBus.once('channelOpened:publications', function(){
+			ctx.publishingBus.once('init:pubsub', function(){
 				done();
 			});
 		});
